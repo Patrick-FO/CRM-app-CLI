@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"crm-admin/internal/api"
+	"crm-admin/internal/context"
 )
 
 var contactCmd = &cobra.Command{
@@ -21,8 +22,10 @@ var contactCreateCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		userID, _ := cmd.Flags().GetString("user-id")
-		if userID == "" {
-			return fmt.Errorf("user-id flag is required")
+
+		// Check if user-id is provided or if we have context
+		if userID == "" && !context.HasUserContext() {
+			return fmt.Errorf("user-id flag is required (or select a user with 'crm-admin user select [user-id]')")
 		}
 
 		// Optional fields
@@ -61,6 +64,13 @@ var contactCreateCmd = &cobra.Command{
 		if contact.ContactEmail != nil {
 			fmt.Printf("   Email: %s\n", *contact.ContactEmail)
 		}
+
+		fmt.Printf("\nYou can now create notes for this contact:\n")
+		if context.HasUserContext() {
+			fmt.Printf("   crm-admin note create \"Note Title\" \"Description\" --contact-ids %d\n", contact.ID)
+		} else {
+			fmt.Printf("   crm-admin note create \"Note Title\" \"Description\" --contact-ids %d --user-id %s\n", contact.ID, contact.UserID)
+		}
 		return nil
 	},
 }
@@ -68,9 +78,14 @@ var contactCreateCmd = &cobra.Command{
 var contactListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List contacts",
-	Long:  `Display a list of contacts. Optionally filter by user ID.`,
+	Long:  `Display a list of contacts for a specific user.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		userID, _ := cmd.Flags().GetString("user-id")
+
+		// Check if user-id is provided or if we have context
+		if userID == "" && !context.HasUserContext() {
+			return fmt.Errorf("user-id flag is required (or select a user with 'crm-admin user select [user-id]')")
+		}
 
 		client := api.New()
 
@@ -79,21 +94,35 @@ var contactListCmd = &cobra.Command{
 			return fmt.Errorf("failed to list contacts: %w", err)
 		}
 
+		// Show which user we're listing for
+		targetUserID := userID
+		username := ""
+		if targetUserID == "" && context.HasUserContext() {
+			userContext, _ := context.LoadUserContext()
+			if userContext != nil {
+				targetUserID = userContext.UserID
+				username = userContext.Username
+			}
+		}
+
 		if len(contacts) == 0 {
-			if userID != "" {
-				fmt.Printf("No contacts found for user ID %s.\n", userID)
+			if username != "" {
+				fmt.Printf("No contacts found for %s (%s).\n", username, targetUserID)
 			} else {
-				fmt.Println("No contacts found.")
+				fmt.Printf("No contacts found for user ID %s.\n", targetUserID)
 			}
 			return nil
 		}
 
-		fmt.Println("📋 Contacts:")
-		fmt.Printf("%-5s | %-20s | %-36s | %-15s | %-15s | %s\n",
-			"ID", "Name", "User ID", "Company", "Phone", "Email")
-		fmt.Printf("%-5s | %-20s | %-36s | %-15s | %-15s | %s\n",
-			"-----", "--------------------", "------------------------------------",
-			"---------------", "---------------", "---------------")
+		if username != "" {
+			fmt.Printf("📋 Contacts for %s (%s):\n", username, targetUserID)
+		} else {
+			fmt.Printf("📋 Contacts for User %s:\n", targetUserID)
+		}
+		fmt.Printf("%-5s | %-20s | %-15s | %-15s | %s\n",
+			"ID", "Name", "Company", "Phone", "Email")
+		fmt.Printf("%-5s | %-20s | %-15s | %-15s | %s\n",
+			"-----", "--------------------", "---------------", "---------------", "---------------")
 
 		for _, contact := range contacts {
 			company := ""
@@ -109,8 +138,8 @@ var contactListCmd = &cobra.Command{
 				email = *contact.ContactEmail
 			}
 
-			fmt.Printf("%-5d | %-20s | %-36s | %-15s | %-15s | %s\n",
-				contact.ID, contact.Name, contact.UserID, company, phone, email)
+			fmt.Printf("%-5d | %-20s | %-15s | %-15s | %s\n",
+				contact.ID, contact.Name, company, phone, email)
 		}
 
 		return nil
@@ -123,12 +152,11 @@ func init() {
 	contactCmd.AddCommand(contactListCmd)
 
 	// Flags for contact create
-	contactCreateCmd.Flags().String("user-id", "", "ID of the user who owns this contact (required)")
+	contactCreateCmd.Flags().String("user-id", "", "ID of the user who owns this contact (optional if user is selected)")
 	contactCreateCmd.Flags().String("company", "", "Company name (optional)")
 	contactCreateCmd.Flags().String("phone", "", "Phone number (optional)")
 	contactCreateCmd.Flags().String("email", "", "Contact email (optional)")
-	contactCreateCmd.MarkFlagRequired("user-id")
 
 	// Flags for contact list
-	contactListCmd.Flags().String("user-id", "", "Filter contacts by user ID (optional)")
+	contactListCmd.Flags().String("user-id", "", "ID of the user whose contacts to list (optional if user is selected)")
 }
